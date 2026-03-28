@@ -3,6 +3,8 @@ type Pixel = [number, number, number, number];
 export interface ImagifyResult {
   canvas: HTMLCanvasElement;
   assignment: number[];
+  sourcePixels: Pixel[];
+  size: number;
   elapsedMs: number;
   method: 'exact' | 'heuristic';
 }
@@ -72,7 +74,14 @@ export async function imagify(
   const canvas = renderAssignment(sourcePixels, assignment, size);
 
   onProgress?.('Done', 1);
-  return { canvas, assignment, elapsedMs: performance.now() - start, method };
+  return {
+    canvas,
+    assignment,
+    sourcePixels,
+    size,
+    elapsedMs: performance.now() - start,
+    method,
+  };
 }
 
 async function loadImages(): Promise<[Blob, Blob, Blob]> {
@@ -286,6 +295,57 @@ async function hungarian(
     result[p[j] - 1] = j - 1;
   }
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Animation
+// ---------------------------------------------------------------------------
+
+function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+}
+
+/**
+ * Renders a single animation frame. Each pixel is linearly interpolated
+ * from its source grid position to its assigned target position.
+ *
+ * @param t  Progress in [0, 1]. 0 = source layout, 1 = target layout.
+ */
+export function renderFrame(
+  { sourcePixels, assignment, size }: ImagifyResult,
+  t: number,
+  canvas: HTMLCanvasElement,
+): void {
+  canvas.width = size;
+  canvas.height = size;
+
+  const ctx = canvas.getContext('2d')!;
+  const imageData = ctx.createImageData(size, size);
+  const eased = easeInOutCubic(Math.max(0, Math.min(1, t)));
+
+  for (let i = 0; i < sourcePixels.length; i++) {
+    const srcX = i % size;
+    const srcY = (i / size) | 0;
+
+    const tgt = assignment[i];
+    const tgtX = tgt % size;
+    const tgtY = (tgt / size) | 0;
+
+    const x = Math.round(srcX + (tgtX - srcX) * eased);
+    const y = Math.round(srcY + (tgtY - srcY) * eased);
+
+    const cx = Math.max(0, Math.min(size - 1, x));
+    const cy = Math.max(0, Math.min(size - 1, y));
+
+    const dst = (cy * size + cx) * 4;
+    const [r, g, b, a] = sourcePixels[i];
+    imageData.data[dst] = r;
+    imageData.data[dst + 1] = g;
+    imageData.data[dst + 2] = b;
+    imageData.data[dst + 3] = a;
+  }
+
+  ctx.putImageData(imageData, 0, 0);
 }
 
 // ---------------------------------------------------------------------------
