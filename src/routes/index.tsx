@@ -43,9 +43,7 @@ function App() {
 
       const dest = canvasRef.current;
       if (dest) {
-        dest.width = result.canvas.width;
-        dest.height = result.canvas.height;
-        dest.getContext('2d')!.drawImage(result.canvas, 0, 0);
+        renderFrame(result, 0, dest);
       }
       setElapsed(result.elapsedMs);
       setMethod(result.method);
@@ -98,102 +96,123 @@ function App() {
   const hasResult = resultRef.current !== null && !running;
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-14">
-      <h1 className="mb-6 text-2xl font-bold">Imagify</h1>
-
-      <div className="mb-6 flex flex-wrap items-end gap-4">
-        <label className="flex flex-col gap-1 text-sm font-medium">
-          Size ({size}&times;{size} = {n.toLocaleString()} pixels)
-          <select
-            value={size}
-            disabled={running || animating}
-            onChange={(e) => setSize(Number(e.target.value))}
-            className="rounded-md border border-gray-300 px-3 py-2 dark:border-gray-600 dark:bg-gray-800"
-          >
-            {SIZE_OPTIONS.map((s) => (
-              <option key={s} value={s}>
-                {s}&times;{s}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <span className="pb-2 text-xs text-gray-500 dark:text-gray-400">
-          {isExact
-            ? 'Exact (Hungarian algorithm)'
-            : 'Heuristic (Morton sort + 2-opt refinement)'}
-        </span>
-
-        <button
-          onClick={run}
-          disabled={running || animating}
-          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          {running ? 'Running...' : 'Run'}
-        </button>
-      </div>
-
-      {running && (
-        <div className="mb-6">
-          <p className="mb-1 text-sm text-gray-500 dark:text-gray-400">
-            {phase} ({Math.round(progress * 100)}%)
-          </p>
-          <div className="h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
-            <div
-              className="h-full rounded-full bg-blue-600 transition-all duration-200"
-              style={{ width: `${progress * 100}%` }}
-            />
-          </div>
+    <main className="page-wrap py-12 lg:py-20">
+      <div className="rise-in grid-frame grid grid-cols-1 lg:grid-cols-12">
+        {/* Canvas */}
+        <div className="grid-cell border-b border-(--line) lg:col-span-8 lg:row-span-3 lg:border-r lg:border-b-0">
+          <canvas
+            ref={canvasRef}
+            className="block w-full bg-(--bg-soft)"
+            style={{ imageRendering: 'pixelated', aspectRatio: '1' }}
+          />
         </div>
-      )}
 
-      {elapsed !== null && !running && (
-        <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
-          Completed in {(elapsed / 1000).toFixed(2)}s
-          {method &&
-            ` — ${method === 'exact' ? 'Hungarian (exact)' : 'Heuristic (sort + refine)'}`}
-        </p>
-      )}
+        {/* Config */}
+        <div className="grid-cell flex flex-col gap-4 border-b border-(--line) p-5 lg:col-span-4 lg:border-b">
+          <span className="kicker">Configuration</span>
 
-      {hasResult && (
-        <div className="mb-6 flex flex-wrap items-end gap-4">
-          <label className="flex flex-col gap-1 text-sm font-medium">
-            Duration ({duration}s)
+          <label className="flex flex-col gap-1.5">
+            <span className="font-mono text-xs text-(--text-2)">size</span>
+            <select
+              value={size}
+              disabled={running || animating}
+              onChange={(e) => setSize(Number(e.target.value))}
+              className="select-input"
+            >
+              {SIZE_OPTIONS.map((s) => (
+                <option key={s} value={s}>
+                  {s} &times; {s}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="flex items-center gap-2 font-mono text-xs text-(--text-2)">
+            <span
+              className="inline-block h-1.5 w-1.5 rounded-full"
+              style={{ background: isExact ? 'var(--accent)' : 'var(--green)' }}
+            />
+            {isExact ? 'kuhn-munkres (exact)' : 'morton + 2-opt (heuristic)'}
+          </div>
+
+          <button
+            onClick={run}
+            disabled={running || animating}
+            className="btn-primary mt-auto w-full"
+          >
+            {running ? 'Computing\u2026' : 'Compute'}
+          </button>
+        </div>
+
+        {/* Output */}
+        <div className="grid-cell flex flex-col gap-3 border-b border-(--line) p-5 lg:col-span-4 lg:border-b">
+          <span className="kicker">Output</span>
+
+          {running ? (
+            <div className="flex flex-1 flex-col justify-center gap-2">
+              <div className="font-mono text-xs text-(--text-2)">
+                {phase} &mdash; {Math.round(progress * 100)}%
+              </div>
+              <div className="h-1 overflow-hidden rounded-full bg-(--line)">
+                <div
+                  className="h-full rounded-full bg-(--accent) transition-all duration-200"
+                  style={{ width: `${progress * 100}%` }}
+                />
+              </div>
+            </div>
+          ) : hasResult ? (
+            <div className="code-block">
+              {'{'}<br />
+              &nbsp;&nbsp;<span className="key">elapsed</span>:{' '}
+              <span className="num">{(elapsed! / 1000).toFixed(2)}</span>s,<br />
+              &nbsp;&nbsp;<span className="key">method</span>:{' '}
+              <span className="str">
+                &quot;{method === 'exact' ? 'hungarian' : 'heuristic'}&quot;
+              </span>,<br />
+              &nbsp;&nbsp;<span className="key">pixels</span>:{' '}
+              <span className="num">{n.toLocaleString()}</span><br />
+              {'}'}
+            </div>
+          ) : (
+            <p className="code-block comment">// run to see results</p>
+          )}
+        </div>
+
+        {/* Animation */}
+        <div className="grid-cell flex flex-col gap-4 p-5 lg:col-span-4">
+          <span className="kicker">Animation</span>
+
+          <label className="flex flex-col gap-2">
+            <span className="font-mono text-xs text-(--text-2)">
+              duration: {duration}s
+            </span>
             <input
               type="range"
               min={0.5}
               max={10}
               step={0.5}
               value={duration}
-              disabled={animating}
+              disabled={animating || !hasResult}
               onChange={(e) => setDuration(Number(e.target.value))}
-              className="w-36"
+              className="range-input"
             />
           </label>
 
           {animating ? (
-            <button
-              onClick={stopAnimation}
-              className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
-            >
+            <button onClick={stopAnimation} className="btn-danger mt-auto w-full">
               Stop
             </button>
           ) : (
             <button
               onClick={animate}
-              className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+              disabled={!hasResult}
+              className="btn-secondary mt-auto w-full"
             >
               Animate
             </button>
           )}
         </div>
-      )}
-
-      <canvas
-        ref={canvasRef}
-        className="border border-gray-300 dark:border-gray-600"
-        style={{ imageRendering: 'pixelated', width: 512, height: 512 }}
-      />
+      </div>
     </main>
   );
 }
