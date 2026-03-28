@@ -10,6 +10,7 @@ export interface ImagifyResult {
 }
 
 const EXACT_THRESHOLD = 2304; // 48×48 — largest n for exact Hungarian
+const POSITION_WEIGHT = 300; // penalises long-range pixel movement
 
 export async function imagify(
   size = 32,
@@ -54,7 +55,12 @@ export async function imagify(
   if (n <= EXACT_THRESHOLD) {
     method = 'exact';
     onProgress?.('Building cost matrix', 0.1);
-    const costMatrix = buildCostMatrix(sourcePixels, targetPixels, targetWeights);
+    const costMatrix = buildCostMatrix(
+      sourcePixels,
+      targetPixels,
+      targetWeights,
+      size,
+    );
 
     onProgress?.('Running Hungarian algorithm', 0.15);
     assignment = await hungarian(n, costMatrix, (row, total) => {
@@ -66,6 +72,7 @@ export async function imagify(
       sourcePixels,
       targetPixels,
       targetWeights,
+      size,
       onProgress,
     );
   }
@@ -86,7 +93,7 @@ export async function imagify(
 
 async function loadImages(): Promise<[Blob, Blob, Blob]> {
   const [source, target, weights] = await Promise.all([
-    fetch('image/source.jpg'),
+    fetch('image/source2.jpg'),
     fetch('image/target-256.jpg'),
     fetch('image/weights-256.jpg'),
   ]);
@@ -112,16 +119,23 @@ function mortonCode(r: number, g: number, b: number): number {
   return code;
 }
 
-function pixelCost(s: Pixel, t: Pixel, w: number): number {
-  return (
-    Math.sqrt(
-      (s[0] - t[0]) ** 2 +
-        (s[1] - t[1]) ** 2 +
-        (s[2] - t[2]) ** 2 +
-        (s[3] - t[3]) ** 2,
-    ) *
-    (0.1 + w)
+function assignmentCost(
+  si: number,
+  tj: number,
+  source: Pixel[],
+  target: Pixel[],
+  weights: Float64Array,
+  size: number,
+): number {
+  const [sr, sg, sb, sa] = source[si];
+  const [tr, tg, tb, ta] = target[tj];
+  const colorDist = Math.sqrt(
+    (sr - tr) ** 2 + (sg - tg) ** 2 + (sb - tb) ** 2 + (sa - ta) ** 2,
   );
+  const dx = (si % size) - (tj % size);
+  const dy = ((si / size) | 0) - ((tj / size) | 0);
+  const posDist = Math.sqrt(dx * dx + dy * dy) / size;
+  return colorDist * (0.1 + weights[tj]) + posDist * POSITION_WEIGHT;
 }
 
 const REFINEMENT_PASSES = 200;
@@ -130,6 +144,7 @@ async function heuristicMatch(
   source: Pixel[],
   target: Pixel[],
   weights: Float64Array,
+  size: number,
   onProgress?: (phase: string, progress: number) => void,
 ): Promise<number[]> {
   const n = source.length;
@@ -173,11 +188,11 @@ async function heuristicMatch(
     const aj = assignment[j];
 
     const curCost =
-      pixelCost(source[i], target[ai], weights[ai]) +
-      pixelCost(source[j], target[aj], weights[aj]);
+      assignmentCost(i, ai, source, target, weights, size) +
+      assignmentCost(j, aj, source, target, weights, size);
     const swpCost =
-      pixelCost(source[i], target[aj], weights[aj]) +
-      pixelCost(source[j], target[ai], weights[ai]);
+      assignmentCost(i, aj, source, target, weights, size) +
+      assignmentCost(j, ai, source, target, weights, size);
 
     if (swpCost < curCost) {
       assignment[i] = aj;
@@ -204,20 +219,26 @@ function buildCostMatrix(
   source: Pixel[],
   target: Pixel[],
   weights: Float64Array,
+  size: number,
 ): Float32Array {
   const n = source.length;
   const cost = new Float32Array(n * n);
 
   for (let i = 0; i < n; i++) {
     const [sr, sg, sb, sa] = source[i];
+    const srcX = i % size;
+    const srcY = (i / size) | 0;
     const rowOffset = i * n;
     for (let j = 0; j < n; j++) {
       const [tr, tg, tb, ta] = target[j];
-      const w = 0.1 + weights[j];
+      const colorDist = Math.sqrt(
+        (sr - tr) ** 2 + (sg - tg) ** 2 + (sb - tb) ** 2 + (sa - ta) ** 2,
+      );
+      const dx = srcX - (j % size);
+      const dy = srcY - ((j / size) | 0);
+      const posDist = Math.sqrt(dx * dx + dy * dy) / size;
       cost[rowOffset + j] =
-        Math.sqrt(
-          (sr - tr) ** 2 + (sg - tg) ** 2 + (sb - tb) ** 2 + (sa - ta) ** 2,
-        ) * w;
+        colorDist * (0.1 + weights[j]) + posDist * POSITION_WEIGHT;
     }
   }
 
@@ -444,17 +465,14 @@ async function downsampleImage(image: Blob, size: number): Promise<Blob> {
       }
 
       ctx.drawImage(img, 0, 0, size, size);
-      canvas.toBlob(
-        (blob) => {
-          URL.revokeObjectURL(url);
-          if (!blob) {
-            reject(new Error('Failed to convert canvas to blob'));
-            return;
-          }
-          resolve(blob);
-        },
-        'image/png',
-      );
+      canvas.toBlob((blob) => {
+        URL.revokeObjectURL(url);
+        if (!blob) {
+          reject(new Error('Failed to convert canvas to blob'));
+          return;
+        }
+        resolve(blob);
+      }, 'image/png');
     };
 
     img.onerror = () => {
