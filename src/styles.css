@@ -97,8 +97,52 @@ button, a {
   overflow: hidden;
 }
 
+.grid-frame-top {
+  border-bottom: none;
+}
+
 .grid-cell {
   background: var(--bg);
+}
+
+/* ---------- Upload zones ---------- */
+
+.upload-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  cursor: pointer;
+  background: var(--bg-soft);
+  transition: background 150ms ease;
+}
+
+.upload-zone:hover {
+  background: var(--accent-soft);
+}
+
+.upload-zone-filled {
+  position: relative;
+  cursor: pointer;
+}
+
+.upload-overlay-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+
+.upload-zone-filled:hover .upload-overlay-label {
+  opacity: 1;
 }
 
 /* ---------- Kicker ---------- */

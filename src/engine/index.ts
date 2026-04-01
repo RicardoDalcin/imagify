@@ -13,26 +13,24 @@ const EXACT_THRESHOLD = 2304; // 48×48 — largest n for exact Hungarian
 const POSITION_WEIGHT = 300; // penalises long-range pixel movement
 
 export async function imagify(
+  source: Blob,
+  target: Blob,
+  weightsCanvas: HTMLCanvasElement | null,
   size = 32,
   onProgress?: (phase: string, progress: number) => void,
 ): Promise<ImagifyResult> {
   const start = performance.now();
 
-  onProgress?.('Loading images', 0);
-  const [sourceBlob, targetBlob, weightsBlob] = await loadImages();
-
   onProgress?.('Downsampling', 0.05);
-  const [dsSource, dsTarget, dsWeights] = await Promise.all([
-    downsampleImage(sourceBlob, size),
-    downsampleImage(targetBlob, size),
-    downsampleImage(weightsBlob, size),
+  const [dsSource, dsTarget] = await Promise.all([
+    downsampleImage(source, size),
+    downsampleImage(target, size),
   ]);
 
   onProgress?.('Extracting pixels', 0.08);
-  const [sourceMatrix, targetMatrix, weightsMatrix] = await Promise.all([
+  const [sourceMatrix, targetMatrix] = await Promise.all([
     imageToMatrix(dsSource),
     imageToMatrix(dsTarget),
-    imageToMatrix(dsWeights),
   ]);
 
   const n = size * size;
@@ -40,12 +38,14 @@ export async function imagify(
   const targetPixels: Pixel[] = new Array(n);
   const targetWeights = new Float64Array(n);
 
+  const weightsData = extractWeights(weightsCanvas, size);
+
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const idx = y * size + x;
       sourcePixels[idx] = sourceMatrix[y][x] as Pixel;
       targetPixels[idx] = targetMatrix[y][x] as Pixel;
-      targetWeights[idx] = weightsMatrix[y][x][0] / 255;
+      targetWeights[idx] = weightsData[idx];
     }
   }
 
@@ -91,13 +91,30 @@ export async function imagify(
   };
 }
 
-async function loadImages(): Promise<[Blob, Blob, Blob]> {
-  const [source, target, weights] = await Promise.all([
-    fetch('image/source2.jpg'),
-    fetch('image/target-256.jpg'),
-    fetch('image/weights-256.jpg'),
-  ]);
-  return Promise.all([source.blob(), target.blob(), weights.blob()]);
+/**
+ * Downsamples the paint canvas to the working size and extracts weight values.
+ * Uses the alpha channel of each pixel as the weight (0-255 -> 0.0-1.0).
+ * If no canvas is provided, returns uniform zero weights (baseline 0.1 still applies in the cost formula).
+ */
+function extractWeights(
+  canvas: HTMLCanvasElement | null,
+  size: number,
+): Float64Array {
+  const n = size * size;
+  const weights = new Float64Array(n);
+  if (!canvas) return weights;
+
+  const tmp = document.createElement('canvas');
+  tmp.width = size;
+  tmp.height = size;
+  const ctx = tmp.getContext('2d')!;
+  ctx.drawImage(canvas, 0, 0, size, size);
+  const { data } = ctx.getImageData(0, 0, size, size);
+
+  for (let i = 0; i < n; i++) {
+    weights[i] = data[i * 4 + 3] / 255;
+  }
+  return weights;
 }
 
 // ---------------------------------------------------------------------------

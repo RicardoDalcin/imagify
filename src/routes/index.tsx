@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { type ImagifyResult, imagify, renderFrame } from '#/engine';
+import { WeightPainter, clearWeights } from '#/components/WeightPainter';
 
 export const Route = createFileRoute('/')({ component: App });
 
@@ -16,16 +17,59 @@ function App() {
   const [method, setMethod] = useState<string | null>(null);
   const [animating, setAnimating] = useState(false);
   const [duration, setDuration] = useState(3);
+  const [brushSize, setBrushSize] = useState(8);
+
+  const [sourceBlob, setSourceBlob] = useState<Blob | null>(null);
+  const [sourceUrl, setSourceUrl] = useState<string | null>(null);
+  const [targetBlob, setTargetBlob] = useState<Blob | null>(null);
+  const [targetUrl, setTargetUrl] = useState<string | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const paintRef = useRef<HTMLCanvasElement>(null);
   const resultRef = useRef<ImagifyResult | null>(null);
   const rafRef = useRef<number>(0);
+  const sourceInputRef = useRef<HTMLInputElement>(null);
+  const targetInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    return () => cancelAnimationFrame(rafRef.current);
+    return () => {
+      cancelAnimationFrame(rafRef.current);
+      if (sourceUrl) URL.revokeObjectURL(sourceUrl);
+      if (targetUrl) URL.revokeObjectURL(targetUrl);
+    };
   }, []);
 
+  const handleSourceUpload = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      if (sourceUrl) URL.revokeObjectURL(sourceUrl);
+      const blob = file as Blob;
+      const url = URL.createObjectURL(blob);
+      setSourceBlob(blob);
+      setSourceUrl(url);
+      resultRef.current = null;
+    },
+    [sourceUrl],
+  );
+
+  const handleTargetUpload = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      if (targetUrl) URL.revokeObjectURL(targetUrl);
+      const blob = file as Blob;
+      const url = URL.createObjectURL(blob);
+      setTargetBlob(blob);
+      setTargetUrl(url);
+      clearWeights(paintRef.current);
+      resultRef.current = null;
+    },
+    [targetUrl],
+  );
+
   const run = useCallback(async () => {
+    if (!sourceBlob || !targetBlob) return;
     cancelAnimationFrame(rafRef.current);
     setAnimating(false);
     setRunning(true);
@@ -34,10 +78,16 @@ function App() {
     resultRef.current = null;
 
     try {
-      const result = await imagify(size, (p, pct) => {
-        setPhase(p);
-        setProgress(pct);
-      });
+      const result = await imagify(
+        sourceBlob,
+        targetBlob,
+        paintRef.current,
+        size,
+        (p, pct) => {
+          setPhase(p);
+          setProgress(pct);
+        },
+      );
 
       resultRef.current = result;
 
@@ -53,7 +103,7 @@ function App() {
       setRunning(false);
       setPhase('');
     }
-  }, [size]);
+  }, [sourceBlob, targetBlob, size]);
 
   const animate = useCallback(() => {
     const result = resultRef.current;
@@ -94,10 +144,109 @@ function App() {
   const n = size * size;
   const isExact = n <= EXACT_THRESHOLD;
   const hasResult = resultRef.current !== null && !running;
+  const canCompute = !!sourceBlob && !!targetBlob && !running && !animating;
 
   return (
     <main className="page-wrap py-12 lg:py-20">
-      <div className="rise-in grid-frame grid grid-cols-1 lg:grid-cols-12">
+      {/* ---- Input grid: source + target/weights ---- */}
+      <div className="rise-in grid-frame grid-frame-top grid grid-cols-1 lg:grid-cols-2">
+        {/* Source upload */}
+        <div className="grid-cell border-b border-(--line) lg:border-r lg:border-b-0">
+          <input
+            ref={sourceInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleSourceUpload}
+          />
+          {sourceUrl ? (
+            <div
+              className="upload-zone-filled"
+              onClick={() => sourceInputRef.current?.click()}
+            >
+              <img
+                src={sourceUrl}
+                alt="Source"
+                className="block w-full object-cover"
+                style={{ aspectRatio: '1' }}
+                draggable={false}
+              />
+              <span className="upload-overlay-label">Change source</span>
+            </div>
+          ) : (
+            <div
+              className="upload-zone"
+              onClick={() => sourceInputRef.current?.click()}
+            >
+              <span className="kicker">Source</span>
+              <span className="mt-2 text-sm text-(--text-2)">
+                Click to upload
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Target upload + weight painting */}
+        <div className="grid-cell border-b border-(--line) lg:border-b-0">
+          <input
+            ref={targetInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleTargetUpload}
+          />
+          {targetUrl ? (
+            <div className="flex flex-col">
+              <WeightPainter
+                targetUrl={targetUrl}
+                brushSize={brushSize}
+                canvasRef={paintRef}
+              />
+              <div className="flex items-center gap-3 border-t border-(--line) px-4 py-2.5">
+                <span className="font-mono text-xs text-(--text-2) shrink-0">
+                  brush: {brushSize}
+                </span>
+                <input
+                  type="range"
+                  min={2}
+                  max={30}
+                  step={1}
+                  value={brushSize}
+                  onChange={(e) => setBrushSize(Number(e.target.value))}
+                  className="range-input flex-1"
+                />
+                <button
+                  type="button"
+                  className="btn-secondary px-2.5 py-1 text-xs"
+                  onClick={() => clearWeights(paintRef.current)}
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary px-2.5 py-1 text-xs"
+                  onClick={() => targetInputRef.current?.click()}
+                >
+                  Change
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div
+              className="upload-zone"
+              onClick={() => targetInputRef.current?.click()}
+            >
+              <span className="kicker">Target</span>
+              <span className="mt-2 text-sm text-(--text-2)">
+                Click to upload
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ---- Output grid: result canvas + controls ---- */}
+      <div className="rise-in grid-frame grid-frame-bottom grid grid-cols-1 lg:grid-cols-12" style={{ animationDelay: '60ms' }}>
         {/* Canvas */}
         <div className="grid-cell border-b border-(--line) lg:col-span-8 lg:row-span-3 lg:border-r lg:border-b-0">
           <canvas
@@ -137,7 +286,7 @@ function App() {
 
           <button
             onClick={run}
-            disabled={running || animating}
+            disabled={!canCompute}
             className="btn-primary mt-auto w-full"
           >
             {running ? 'Computing\u2026' : 'Compute'}
@@ -174,7 +323,11 @@ function App() {
               {'}'}
             </div>
           ) : (
-            <p className="code-block comment">// run to see results</p>
+            <p className="code-block comment">
+              {sourceBlob && targetBlob
+                ? '// ready to compute'
+                : '// upload both images first'}
+            </p>
           )}
         </div>
 
